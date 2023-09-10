@@ -8,7 +8,7 @@ import numba as nb
 from numba.typed import List
 from timeit import default_timer as timer   
 
-@nb.jit((nb.float64[:,:,:])(nb.float64[:,:,:], nb.float64, nb.float64), nopython=True, parallel=True)
+@nb.jit((nb.float64[:,:,:])(nb.float64[:,:,:], nb.float64, nb.float64), parallel=True)
 def generate_tissue(void_masked_array, tissue_mean, tissue_standard_deviation):
     """
     Generate voxels along a gaussian distribution of soft tissue and add it to the back ground.
@@ -106,7 +106,7 @@ def main():
     
     hand_image = sitk.GetImageFromArray(new_tissue_gauss)
 
-    print("Smoothing and shaprening...")
+    print("Smoothing and sharpening...")
     hand_image = contrast_enhancer(hand_image)
 
     input_filename = os.path.basename(hand_image_path).split('/')[-1]
