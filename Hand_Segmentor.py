@@ -8,17 +8,6 @@ import time
 import math
 import random
 
-# from PIL import Image
-
-# from scipy import signal
-# from scipy.ndimage import gaussian_filter
-# from scipy.ndimage import laplace
-# from scipy.io import savemat
-
-# import matplotlib.pyplot as plt
-
-# from itertools import filterfalse
-
 import numba as nb
 from numba.typed import List
 from timeit import default_timer as timer   
@@ -103,28 +92,40 @@ def del2(M):
     return D / 4
 
 def main():
+    global temp_dir
+    global debug_flag
+    
+    # Parse input arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("hand_image_path", type=str, help="Image (path + filename)")
-    parser.add_argument("bone_num", type=str, help="Image (path + filename)")
+    parser.add_argument("output_dir", type=str, nargs='?', default=os.path.realpath(os.path.dirname(__file__)), help="Path to outpt directory")
+    parser.add_argument("bone_num", type=int, help="Bone to segment")
+    parser.add_argument("debug_flag", type=int, nargs='?', default=0, help="Enable debug")
     args = parser.parse_args()
 
     hand_image_path = args.hand_image_path
-    hand_image = sitk.ReadImage(hand_image_path)
+    output_dir = args.output_dir
 
-    bone_num = int(args.bone_num)
+    bone_num = args.bone_num
+    debug_flag = args.debug_flag
+    print("Processing bone #{}".format(bone_num))
+    if debug_flag:
+        print("Debugging is enabled.")
     
-    global temp_dir
-    temp_dir = os.path.join(os.path.realpath(os.path.dirname(__file__)), 'tmp_{}'.format(bone_num))
-    if(os.path.isdir(temp_dir)):
-        shutil.rmtree(temp_dir)
-    os.mkdir(temp_dir)
-    
+    hand_image = sitk.ReadImage(hand_image_path)
     print("Image read!")
 
-    region_based_levelset(sitk.Cast(hand_image, sitk.sitkFloat64), bone_num)
+    if debug_flag:
+        temp_dir = os.path.join(output_dir, 'intermediate_files_bone_{}'.format(bone_num))
+        # if(os.path.isdir(temp_dir)):
+        #     shutil.rmtree(temp_dir)
+        if not os.path.exists(temp_dir):
+            os.mkdir(temp_dir)
+        print("Intermediary images will be stored in {}".format(temp_dir))
 
-    # print("Starting Crop...")
-    # region_based_levelset(hand_image)
+    # Run main levelset process function
+    mask = region_based_levelset(sitk.Cast(hand_image, sitk.sitkFloat64), bone_num)
+    sitk.WriteImage(mask, os.path.join(output_dir, 'mask_bone_{}.nii'.format(bone_num)))
 
     return
 
@@ -270,70 +271,70 @@ def set_mask_value(image, mask, value):
                      mask*float(value), sitk.sitkInt8)
         
 def region_based_levelset(hand_image, bone_num):
-    print(temp_dir)
-    img_slices = hand_image.GetDepth()
+
+    # Parse through coronal 
+    img_slices = hand_image.GetHeight()
+
+    # normalize image
     hand_image = sitk.Normalize(hand_image)
     # sitk.WriteImage(hand_image, os.path.join(temp_dir, 'hand.nii'))
 
     erode_filter = sitk.BinaryErodeImageFilter()
     dilate_filter = sitk.BinaryDilateImageFilter()
     
-    hand_image_g = sitk.Cast(sitk.GradientMagnitude(hand_image), sitk.sitkFloat64)
-    sitk.WriteImage(hand_image_g, os.path.join(temp_dir, 'edge.nii'))
-    edge = sitk.CannyEdgeDetection(hand_image, lowerThreshold=0.7, upperThreshold=0.99, variance = 3*[0.5*hand_image.GetSpacing()[0]])
-    sitk.WriteImage(edge, os.path.join(temp_dir, 'edge2.nii'))
-    hand_thresh = sitk.BinaryThreshold(hand_image_g, 1.2, 9999, 1, 0)
-    hand_thresh = sitk.Cast(edge,sitk.sitkUInt8) | hand_thresh
+    # add canny and gradient magnitude filters together
+    canny_edge = sitk.CannyEdgeDetection(hand_image, lowerThreshold=0.7, upperThreshold=0.99, variance = 3*[0.5*hand_image.GetSpacing()[0]])
+    gradient_edge = sitk.Cast(sitk.GradientMagnitude(hand_image-(2*canny_edge)), sitk.sitkFloat64)
 
-    sitk.WriteImage(hand_thresh, os.path.join(temp_dir, 'thresh_init.nii'))
+    gradient_edge_thresh = sitk.BinaryThreshold(gradient_edge, 1.3, 9999, 1, 0)
+    # erode_filter.SetKernelRadius(1)
+    # gradient_edge_thresh = erode_filter.Execute(gradient_edge_thresh)
+    hand_thresh = sitk.Cast(canny_edge,sitk.sitkUInt8) | gradient_edge_thresh
+
 
     img_conn = sitk.ConnectedComponent(hand_thresh, hand_thresh)
     img_conn = sitk.RelabelComponent(img_conn, sortByObjectSize=True)
-    sitk.WriteImage(img_conn, os.path.join(temp_dir, 'conn.nii'))
+    if debug_flag:
+        sitk.WriteImage(gradient_edge, os.path.join(temp_dir, 'gradient_edge.nii'))
+        sitk.WriteImage(gradient_edge_thresh, os.path.join(temp_dir, 'gradient_edge_thresh.nii'))
+        sitk.WriteImage(canny_edge, os.path.join(temp_dir, 'canny_edge.nii'))
+        sitk.WriteImage(hand_thresh, os.path.join(temp_dir, 'thresh_init.nii'))
+        sitk.WriteImage(img_conn, os.path.join(temp_dir, 'conn.nii'))
 
-    if bone_num == 6:
-        dilate_filter.SetKernelRadius(70)
-        erode_filter.SetKernelRadius(70)
-    elif bone_num == 7:
-        dilate_filter.SetKernelRadius(35)
-        erode_filter.SetKernelRadius(34)
-    elif bone_num == 13:
-        dilate_filter.SetKernelRadius(17)
-        erode_filter.SetKernelRadius(17)
-    elif bone_num == 16:
-        dilate_filter.SetKernelRadius(25)
-        erode_filter.SetKernelRadius(25)
-    else:
-        dilate_filter.SetKernelRadius(17)
-        erode_filter.SetKernelRadius(17)
+    # if bone_num == 6:
+    #     dilate_filter.SetKernelRadius(70)
+    #     erode_filter.SetKernelRadius(68)
+    # elif bone_num == 7:
+    #     dilate_filter.SetKernelRadius(35)
+    #     erode_filter.SetKernelRadius(34)
+    # elif bone_num == 13:
+    #     dilate_filter.SetKernelRadius(17)
+    #     erode_filter.SetKernelRadius(17)
+    # elif bone_num == 16:
+    #     dilate_filter.SetKernelRadius(25)
+    #     erode_filter.SetKernelRadius(25)
+    # else:
+    #     dilate_filter.SetKernelRadius(70)
+    #     erode_filter.SetKernelRadius(68)
+
+    dilate_filter.SetKernelRadius(70)
+    erode_filter.SetKernelRadius(70)
+
     thresh_bone = 1 * (img_conn == bone_num)
-    thresh_bone = dilate_filter.Execute(thresh_bone)
-    # dilate_filter.SetKernelRadius(10)
-    sitk.WriteImage(thresh_bone, os.path.join(temp_dir, 'dilated_{}.nii').format(bone_num))
-    thresh_bone = sitk.BinaryFillhole(thresh_bone)
-    sitk.WriteImage(thresh_bone, os.path.join(temp_dir, 'filled_{}.nii').format(bone_num))
-    # erode_filter.SetKernelRadius(7)
-    thresh_bone = erode_filter.Execute(thresh_bone)
-    sitk.WriteImage(thresh_bone, os.path.join(temp_dir, 'eroded_{}.nii').format(bone_num))
-    # individual_thesh_bones.append(thresh_bone)
 
-    # total_thresh = hand_image*0
+    thresh_bone_dilated = dilate_filter.Execute(thresh_bone)
+    thresh_bone_filled = sitk.BinaryFillhole(thresh_bone_dilated)
+    thresh_bone = erode_filter.Execute(thresh_bone_filled)
 
-    # for b in individual_thesh_bones:
-    #     # bone = sitk.GetArrayFromImage(b)
-    #     total_thresh = bone | total_thresh
+    if debug_flag:
+        sitk.WriteImage(thresh_bone_dilated, os.path.join(temp_dir, 'dilated_{}.nii').format(bone_num))
+        sitk.WriteImage(thresh_bone_filled, os.path.join(temp_dir, 'filled_{}.nii').format(bone_num))
+        sitk.WriteImage(thresh_bone, os.path.join(temp_dir, 'eroded_{}.nii').format(bone_num))
 
-    # sitk.WriteImage(sitk.GetImageFromArray(total_thresh), os.path.join(temp_dir, 'total_thresh.nii'))
-    # exit()
-
-    # thresh_slice = erode_filter.Execute(thresh_slice)
-    # thresh_slice = dilate_filter.Execute(thresh_slice)
-    # thresh_slice = set_mask_value(thresh_slice, thresh_slice==0, 2)
-    # thresh_slice = set_mask_value(thresh_slice, thresh_slice==1, -2)
-    # sitk.WriteImage(thresh_slice, os.path.join(temp_dir, 'thresh.nii'))
+    # return thresh_bone
     full_hand_mask = hand_image*0
     full_hand_mask = sitk.Cast(full_hand_mask, sitk.sitkUInt8)
-    for idx in range(0, img_slices-2):
+    for idx in range(0, img_slices):
         hand_slice = hand_image[:,idx,:]
         hand_slice= sitk.GetArrayFromImage(hand_slice)
         max_iter = 500
@@ -403,19 +404,18 @@ def region_based_levelset(hand_image, bone_num):
             #     break
 
             time_elapsed = time.time() - start_time
-            print('Time for one iteration: {}'.format(time_elapsed))
-            print(idx)
-            print(i)
+            print('Bone #{}, slice #{}. Time for iteration #{}: {}s...'.format(bone_num, idx, i, time_elapsed))
             print('************************************')
-        # bone_mask = bone_mask + (levelset<=0)*(thresh_bone_idx+1)
+
         bone_mask = bone_mask + 1.0*(levelset<=0)
         bone_mask = sitk.GetImageFromArray(bone_mask)
         bone_mask = sitk.Cast(bone_mask, sitk.sitkUInt8)
         full_hand_mask[:, idx, :] = sitk.BinaryFillhole(bone_mask)
-        sitk.WriteImage(full_hand_mask, os.path.join(temp_dir, 'region_inv'+str(idx)+'.nii'))
+        # sitk.WriteImage(full_hand_mask, os.path.join(temp_dir, 'region_inv'+str(idx)+'.nii'))
 
-    return
+    return full_hand_mask
 
 temp_dir = ''
+debug_flag = 0
 if __name__ == '__main__':
     main()
