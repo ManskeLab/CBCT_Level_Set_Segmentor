@@ -318,7 +318,7 @@ def region_based_levelset(hand_image, bone_num):
     #     erode_filter.SetKernelRadius(68)
 
     dilate_filter.SetKernelRadius(70)
-    erode_filter.SetKernelRadius(70)
+    erode_filter.SetKernelRadius(68)
 
     thresh_bone = 1 * (img_conn == bone_num)
 
@@ -331,7 +331,7 @@ def region_based_levelset(hand_image, bone_num):
         sitk.WriteImage(thresh_bone_filled, os.path.join(temp_dir, 'filled_{}.nii').format(bone_num))
         sitk.WriteImage(thresh_bone, os.path.join(temp_dir, 'eroded_{}.nii').format(bone_num))
 
-    # return thresh_bone
+    return thresh_bone
     full_hand_mask = hand_image*0
     full_hand_mask = sitk.Cast(full_hand_mask, sitk.sitkUInt8)
     for idx in range(0, img_slices):
