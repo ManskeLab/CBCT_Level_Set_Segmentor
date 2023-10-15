@@ -44,7 +44,7 @@ DEBUG_FLAG=0
 # Process the input options. Add options as needed.        #
 ############################################################
 # Get the options
-while getopts ":h:i:o:b:s:p:c:v:" option; do
+while getopts ":hi:o:b:s:p:c:v:" option; do
    case $option in
       h) # display Help
          Help
